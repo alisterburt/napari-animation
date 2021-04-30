@@ -41,6 +41,9 @@ class AnimationSliderWidget(QSlider):
         self.setMaximum(len(self.interpol_states) - 1)
         self.requires_update = False
 
+    def _requires_update_callback(self):
+        self.requires_update = True
+
     def _compute_cumulative_frame_count(self):
         """Compute cumulative frame count"""
         steps = [keyframe["steps"] for keyframe in self.animation.key_frames]
