@@ -30,3 +30,6 @@ class AnimationSliderWidget(QSlider):
             self.interpol_states.append(state)
         self.setMaximum(len(self.interpol_states) - 1)
         self.requires_update = False
+
+    def _requires_update_callback(self):
+        self.requires_update = True
