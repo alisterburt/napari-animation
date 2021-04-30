@@ -87,6 +87,12 @@ class AnimationWidget(QWidget):
         self.animationsliderWidget.valueChanged.connect(
             self._move_animationslider_callback
         )
+        self.frameWidget.stepsSpinBox.valueChanged.connect(
+            self.animationsliderWidget._requires_update_callback
+        )
+        self.frameWidget.easeComboBox.currentIndexChanged.connect(
+            self.animationsliderWidget._requires_update_callback
+        )
         self.viewer.events.theme.connect(self._update_theme)
 
     def _release_callbacks(self):
