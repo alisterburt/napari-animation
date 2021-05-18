@@ -1,4 +1,5 @@
 import numbers
+from dataclasses import asdict
 
 import numpy as np
 import pytest
@@ -88,8 +89,8 @@ def test_interpolate_log(a, b, fraction):
 @pytest.mark.parametrize("fraction", [0, 0.2, 0.4, 0.6, 0.8, 1])
 def test_interpolate_state(key_frames, fraction):
     """Check that state interpolation works"""
-    initial_state = key_frames[0]["viewer"]
-    final_state = key_frames[1]["viewer"]
+    initial_state = asdict(key_frames[0].viewer_state)
+    final_state = asdict(key_frames[1].viewer_state)
     result = interpolate_state(initial_state, final_state, fraction)
     assert len(result) == len(initial_state)
     if fraction == 0:

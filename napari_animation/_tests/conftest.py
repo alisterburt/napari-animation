@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from napari_animation import Animation
+from napari_animation.key_frame import ViewerState
 
 
 @pytest.fixture
@@ -20,13 +21,13 @@ def empty_animation(make_napari_viewer):
 def animation_with_key_frames(empty_animation):
     for i in range(2):
         empty_animation.capture_keyframe()
-        empty_animation._viewer.camera.zoom *= 2
+        empty_animation.viewer.camera.zoom *= 2
     return empty_animation
 
 
 @pytest.fixture
 def viewer_state(empty_animation):
-    return empty_animation._get_viewer_state()
+    return ViewerState.from_viewer(empty_animation.viewer)
 
 
 @pytest.fixture
@@ -38,11 +39,10 @@ def key_frames(animation_with_key_frames):
 def image_animation(make_napari_viewer):
     viewer = make_napari_viewer()
     viewer.add_image(np.random.random((28, 28)))
-    animation = Animation(viewer)
-    return animation
+    return Animation(viewer)
 
 
 @pytest.fixture
-def layer_state(image_animation):
+def layer_state(image_animation: Animation):
     image_animation.capture_keyframe()
-    return image_animation.key_frames[0]["viewer"]["layers"]
+    return image_animation.key_frames[0].viewer_state.layers
