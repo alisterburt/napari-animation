@@ -1,10 +1,10 @@
 import os
+from dataclasses import asdict
 from pathlib import Path
 
 import imageio
 import numpy as np
 from napari import Viewer
-from napari.layers.utils.layer_utils import convert_to_uint8
 from napari.utils.events import EventedList, EventedModel
 from napari.utils.io import imsave
 from pydantic import Field
@@ -12,14 +12,17 @@ from scipy import ndimage as ndi
 
 from .easing import Easing
 from .interpolation import Interpolation, interpolate_state
+from .key_frame import KeyFrame, ViewerState
 
 
 class Animation(EventedModel):
     """Make animations using the napari viewer.
+
     Parameters
     ----------
     _viewer : napari.Viewer
         napari viewer.
+
     Attributes
     ----------
     key_frames : list of dict
@@ -49,9 +52,10 @@ class Animation(EventedModel):
         self._viewer = viewer
 
     def capture_keyframe(
-        self, steps=15, ease=Easing.LINEAR, insert=True, frame=None
+        self, steps=15, ease=Easing.LINEAR, insert=True, frame: int = None
     ):
         """Record current key-frame
+
         Parameters
         ----------
         steps : int
@@ -69,12 +73,7 @@ class Animation(EventedModel):
         if frame is not None:
             self.frame = frame
 
-        new_state = {
-            "viewer": self._get_viewer_state(),
-            "thumbnail": self._generate_thumbnail(),
-            "steps": steps,
-            "ease": ease,
-        }
+        new_state = KeyFrame.from_viewer(self._viewer, steps=steps, ease=ease)
 
         if insert or self.frame == -1:
             current_frame = self.frame
@@ -88,7 +87,7 @@ class Animation(EventedModel):
     def n_frames(self):
         """The total frame count of the animation"""
         if len(self.key_frames) >= 2:
-            return np.sum([f["steps"] for f in self.key_frames[1:]]) + 1
+            return np.sum([f.steps for f in self.key_frames[1:]]) + 1
         else:
             return 0
 
@@ -101,51 +100,24 @@ class Animation(EventedModel):
         """
         self.frame = frame
         if len(self.key_frames) > 0 and self.frame > -1:
-            self._set_viewer_state(self.key_frames[frame]["viewer"])
+            self._set_viewer_state(self.key_frames[frame].viewer_state)
 
     def set_to_current_keyframe(self):
         """Set the viewer to the current key-frame"""
-        self._set_viewer_state(self.key_frames[self.frame]["viewer"])
+        self._set_viewer_state(self.key_frames[self.frame].viewer_state)
 
-    def _get_viewer_state(self):
-        """Capture current viewer state
-        Returns
-        -------
-        new_state : dict
-            Description of viewer state.
-        """
-
-        new_state = {
-            "camera": self._viewer.camera.dict(),
-            "dims": self._viewer.dims.dict(),
-            "layers": self._get_layer_state(),
-        }
-
-        return new_state
-
-    def _set_viewer_state(self, state):
+    def _set_viewer_state(self, state: ViewerState):
         """Sets the current viewer state
         Parameters
         ----------
         state : dict
             Description of viewer state.
         """
-        self._viewer.camera.update(state["camera"])
-        self._viewer.dims.update(state["dims"])
-        self._set_layer_state(state["layers"])
+        self._viewer.camera.update(state.camera)
+        self._viewer.dims.update(state.dims)
+        self._set_layer_state(state.layers)
 
-    def _get_layer_state(self):
-        """Store layer state in a dict of dicts {layer.name: state}"""
-        layer_state = {
-            layer.name: layer._get_base_state()
-            for layer in self._viewer.layers
-        }
-        # remove metadata from layer_state dicts
-        for state in layer_state.values():
-            state.pop("metadata")
-        return layer_state
-
-    def _set_layer_state(self, layer_state):
+    def _set_layer_state(self, layer_state: dict):
         for layer_name, layer_state in layer_state.items():
             layer = self._viewer.layers[layer_name]
             for key, value in layer_state.items():
@@ -161,22 +133,22 @@ class Animation(EventedModel):
             self.key_frames, self.key_frames[1:]
         ):
             # capture necessary info for interpolation
-            initial_state = current_frame["viewer"]
-            final_state = next_frame["viewer"]
-            interpolation_steps = next_frame["steps"]
-            ease = next_frame["ease"]
+            initial_state = current_frame.viewer_state
+            final_state = next_frame.viewer_state
+            interpolation_steps = next_frame.steps
+            ease = next_frame.ease
 
             # generate intermediate states between key-frames
             for interp in range(interpolation_steps):
                 fraction = interp / interpolation_steps
                 fraction = ease(fraction)
                 state = interpolate_state(
-                    initial_state,
-                    final_state,
+                    asdict(initial_state),
+                    asdict(final_state),
                     fraction,
                     self.state_interpolation_map,
                 )
-                yield state
+                yield ViewerState(**state)
 
         # be sure to include the final state
         yield final_state
@@ -193,37 +165,6 @@ class Animation(EventedModel):
             self._set_viewer_state(state)
             frame = self._viewer.screenshot(canvas_only=canvas_only)
             yield frame
-
-    def _generate_thumbnail(self):
-        """generate a thumbnail from viewer"""
-        screenshot = self._viewer.screenshot(canvas_only=True)
-        thumbnail = self._coerce_image_into_thumbnail_shape(screenshot)
-        return thumbnail
-
-    def _coerce_image_into_thumbnail_shape(self, image):
-        """Resizes an image to self._thumbnail_shape with padding"""
-        scale_factor = np.min(np.divide(self._thumbnail_shape, image.shape))
-        intermediate_image = ndi.zoom(image, (scale_factor, scale_factor, 1))
-
-        padding_needed = np.subtract(
-            self._thumbnail_shape, intermediate_image.shape
-        )
-        pad_amounts = [(p // 2, (p + 1) // 2) for p in padding_needed]
-        thumbnail = np.pad(intermediate_image, pad_amounts, mode="constant")
-        thumbnail = convert_to_uint8(thumbnail)
-
-        # blend thumbnail with opaque black background
-        background = np.zeros(self._thumbnail_shape, dtype=np.uint8)
-        background[..., 3] = 255
-
-        f_dest = thumbnail[..., 3][..., None] / 255
-        f_source = 1 - f_dest
-        thumbnail = thumbnail * f_dest + background * f_source
-        return thumbnail.astype(np.uint8)
-
-    @property
-    def _thumbnail_shape(self):
-        return (32, 32, 4)
 
     @property
     def current_key_frame(self):
@@ -245,8 +186,6 @@ class Animation(EventedModel):
             path to use for saving the movie (can also be a path). Extension
             should be one of .gif, .mp4, .mov, .avi, .mpg, .mpeg, .mkv, .wmv
             If no extension is provided, images are saved as a folder of PNGs
-        interpolation_steps : int
-            Number of steps for interpolation.
         fps : int
             frames per second
         quality: float
